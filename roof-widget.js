@@ -19,6 +19,9 @@
     el.innerHTML = `
       <h2>Get Your Instant Roofing Estimate</h2>
       <div class="row">
+        <label>ZIP code
+          <input id="zip" maxlength="10" placeholder="e.g., 37203" />
+        </label>
         <label>Material
           <select id="material">
             <option value="shingle">Shingle</option>
@@ -77,6 +80,7 @@
 
       const params = new URLSearchParams({
         client: "demo",
+        zip: $("#zip").value.trim(),
         material: $("#material").value,
         size: $("#size").value,
         stories: $("#stories").value,
@@ -95,7 +99,7 @@
         }
         out.textContent = `Estimated range: $${j.low.toLocaleString()} – $${j.high.toLocaleString()}`;
 
-        // Fire-and-forget lead logging
+        // fire-and-forget lead log
         fetch("/api/lead", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
