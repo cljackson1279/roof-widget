@@ -1,3 +1,4 @@
+// /api/estimate.js  (CommonJS for Vercel Node functions)
 const { createClient } = require("@supabase/supabase-js");
 
 module.exports = async (req, res) => {
@@ -18,7 +19,7 @@ module.exports = async (req, res) => {
       state = ""
     } = req.query;
 
-    // 1) Base ranges by size (keep these conservative)
+    // 1) Base ranges by size
     const bands = {
       lt1500: [8000, 12000],
       "1500to3000": [12000, 18000],
@@ -26,35 +27,33 @@ module.exports = async (req, res) => {
     };
     let [low, high] = bands[size] || bands["1500to3000"];
 
-    // 2) Default multipliers (used if no client config exists)
+    // 2) Default multipliers
     let matMult = { shingle:1.0, tile:1.4, metal:1.6 }[material] || 1.0;
     let stoMult = { "1":1.0, "2":1.1, "3":1.2 }[stories] || 1.0;
     let urgMult = { later:1.0, soon:1.05, emergency:1.1 }[urgency] || 1.0;
-    let locBaseMult = 1.0; // generic regional uplift
+    let locBaseMult = 1.0;
 
-    // 3) Pull client + location factors from Supabase (if configured)
+    // 3) Pull client + location factors from Supabase if available
     const url = process.env.SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE; // server-side only
+    const key = process.env.SUPABASE_SERVICE_ROLE;
     if (url && key) {
       const sb = createClient(url, key);
 
-      // Client-level multipliers
-      const { data: clientRow, error: clientErr } = await sb
+      // client-level multipliers
+      const { data: c } = await sb
         .from("clients")
         .select("material_mult, stories_mult, urgency_mult")
         .eq("client_id", client)
         .single();
 
-      if (!clientErr && clientRow) {
-        if (clientRow.material_mult && clientRow.material_mult[material] != null)
-          matMult = Number(clientRow.material_mult[material]) || matMult;
-        if (clientRow.stories_mult && clientRow.stories_mult[stories] != null)
-          stoMult = Number(clientRow.stories_mult[stories]) || stoMult;
-        if (clientRow.urgency_mult && clientRow.urgency_mult[urgency] != null)
-          urgMult = Number(clientRow.urgency_mult[urgency]) || urgMult;
-      }
+      if (c?.material_mult && c.material_mult[material] != null)
+        matMult = Number(c.material_mult[material]) || matMult;
+      if (c?.stories_mult && c.stories_mult[stories] != null)
+        stoMult = Number(c.stories_mult[stories]) || stoMult;
+      if (c?.urgency_mult && c.urgency_mult[urgency] != null)
+        urgMult = Number(c.urgency_mult[urgency]) || urgMult;
 
-      // Location factor resolution: ZIP → City+State → State → none
+      // location resolution: ZIP → City+State → State
       let lf = null;
       if (zip) {
         const { data } = await sb
@@ -88,13 +87,11 @@ module.exports = async (req, res) => {
       if (lf) {
         locBaseMult = Number(lf.base_mult || 1.0) || 1.0;
         if (lf.material_mult && lf.material_mult[material] != null) {
-          // multiply on top of client material mult
           matMult = matMult * Number(lf.material_mult[material] || 1.0);
         }
       }
     }
 
-    // 4) Final math
     const mult = matMult * stoMult * urgMult * locBaseMult;
     const outLow  = Math.round((low  * mult) / 100) * 100;
     const outHigh = Math.round((high * mult) / 100) * 100;
@@ -104,13 +101,11 @@ module.exports = async (req, res) => {
       low: outLow,
       high: outHigh,
       currency: "USD",
-      client, material, size, stories, urgency,
-      zip, city, state
+      client, material, size, stories, urgency, zip, city, state
     });
   } catch (e) {
     console.error("estimate error:", e);
     return res.status(500).json({ error: "Failed to compute estimate." });
   }
 };
-
 
