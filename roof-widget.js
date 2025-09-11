@@ -4,27 +4,13 @@
 
     const s = document.createElement("style");
     s.textContent = `
-      .card {
-        font-family: system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;
-        max-width: 520px;
-        margin: 12px auto;
-        padding: 16px;
-        border: 1px solid #e5e7eb;
-        border-radius: 16px;
-        box-shadow: 0 4px 16px rgba(0,0,0,.06);
-      }
-      .row { display: grid; gap: 10px; margin: 10px 0; }
-      select,input { padding: 10px; border-radius: 10px; border: 1px solid #d1d5db; }
-      button {
-        padding: 10px 14px;
-        border-radius: 12px;
-        border: 0;
-        cursor: pointer;
-        background: #111827;
-        color: #fff;
-      }
-      .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
-      .estimate { font-weight: 700; font-size: 20px; margin: 8px 0; }
+      .card{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;max-width:520px;margin:12px auto;padding:16px;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.06)}
+      .row{display:grid;gap:10px;margin:10px 0}
+      select,input{padding:10px;border-radius:10px;border:1px solid #d1d5db}
+      button{padding:10px 14px;border-radius:12px;border:0;cursor:pointer;background:#111827;color:#fff}
+      .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}
+      .estimate{font-weight:700;font-size:20px;margin:8px 0}
+      .error{color:#b91c1c;font-size:14px;margin-top:6px}
     `;
     root.appendChild(s);
 
@@ -70,14 +56,22 @@
       </div>
       <div class="actions"><button id="go">Get Estimate</button></div>
       <div class="estimate" id="out"></div>
+      <div class="error" id="err" style="display:none;"></div>
     `;
     root.appendChild(el);
 
     const $ = (sel) => root.querySelector(sel);
+    const out = $("#out");
+    const err = $("#err");
 
     $("#go").addEventListener("click", async () => {
+      err.style.display = "none";
+      err.textContent = "";
+      out.textContent = "";
+
       if (!$("#consent").checked) {
-        alert("Please check the consent box.");
+        err.textContent = "Please check the consent box.";
+        err.style.display = "";
         return;
       }
 
@@ -92,31 +86,35 @@
         phone: $("#phone").value
       });
 
-      // 1) Get estimate from API
-      const r = await fetch("/api/estimate?" + params.toString());
-      const j = await r.json();
+      try {
+        const r = await fetch("/api/estimate?" + params.toString());
+        if (!r.ok) throw new Error("Estimate API returned " + r.status);
+        const j = await r.json();
+        if (!j || typeof j.low !== "number" || typeof j.high !== "number") {
+          throw new Error("Estimate response malformed");
+        }
+        out.textContent = `Estimated range: $${j.low.toLocaleString()} – $${j.high.toLocaleString()}`;
 
-      $("#out").textContent = `Estimated range: $${j.low.toLocaleString()} – $${j.high.toLocaleString()}`;
-
-      // 2) Send lead (safe even if no-op)
-      await fetch("/api/lead", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...Object.fromEntries(params), estimate: j })
-      });
+        // Fire-and-forget lead logging
+        fetch("/api/lead", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...Object.fromEntries(params), estimate: j })
+        }).catch(() => {});
+      } catch (e) {
+        console.error(e);
+        err.textContent = "Sorry, we couldn't calculate your estimate. Please try again.";
+        err.style.display = "";
+      }
     });
   }
 
   document.addEventListener("DOMContentLoaded", () => {
     const slot =
       document.querySelector("[data-roof-widget]") ||
-      (() => {
-        const d = document.createElement("div");
-        d.setAttribute("data-roof-widget", "");
-        document.body.appendChild(d);
-        return d;
-      })();
+      (() => { const d = document.createElement("div"); d.setAttribute("data-roof-widget",""); document.body.appendChild(d); return d; })();
     mount(slot);
   });
 })();
+
 
