@@ -4,13 +4,15 @@
 
     const s = document.createElement("style");
     s.textContent = `
-      .card{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;max-width:520px;margin:12px auto;padding:16px;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.06)}
+      .card{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;max-width:620px;margin:12px auto;padding:16px;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.06)}
       .row{display:grid;gap:10px;margin:10px 0}
+      @media(min-width:640px){ .row{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
       select,input{padding:10px;border-radius:10px;border:1px solid #d1d5db}
       button{padding:10px 14px;border-radius:12px;border:0;cursor:pointer;background:#111827;color:#fff}
       .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}
       .estimate{font-weight:700;font-size:20px;margin:8px 0}
       .error{color:#b91c1c;font-size:14px;margin-top:6px}
+      .muted{font-size:12px;color:#6b7280}
     `;
     root.appendChild(s);
 
@@ -21,6 +23,15 @@
       <div class="row">
         <label>ZIP code
           <input id="zip" maxlength="10" placeholder="e.g., 37203" />
+        </label>
+        <label>City
+          <input id="city" placeholder="e.g., Nashville" />
+        </label>
+        <label>State
+          <input id="state" maxlength="2" placeholder="e.g., TN" />
+        </label>
+        <label>County
+          <input id="county" placeholder="e.g., Davidson" />
         </label>
         <label>Material
           <select id="material">
@@ -51,12 +62,16 @@
           </select>
         </label>
       </div>
+
+      <p class="muted">Tip: You can fill just ZIP, or City+State, or County+State. We’ll use the best match.</p>
+
       <div class="row">
         <label>Name <input id="name" placeholder="Jane Doe" /></label>
         <label>Email <input id="email" placeholder="jane@email.com" /></label>
         <label>Phone <input id="phone" placeholder="(555) 555-5555" /></label>
         <label><input type="checkbox" id="consent" /> I agree to be contacted</label>
       </div>
+
       <div class="actions"><button id="go">Get Estimate</button></div>
       <div class="estimate" id="out"></div>
       <div class="error" id="err" style="display:none;"></div>
@@ -80,7 +95,10 @@
 
       const params = new URLSearchParams({
         client: "demo",
-        zip: $("#zip").value.trim(),
+        zip: ($("#zip").value || "").trim(),
+        city: ($("#city").value || "").trim(),
+        state: ($("#state").value || "").trim().toUpperCase(),
+        county: ($("#county").value || "").trim(),
         material: $("#material").value,
         size: $("#size").value,
         stories: $("#stories").value,
@@ -99,7 +117,7 @@
         }
         out.textContent = `Estimated range: $${j.low.toLocaleString()} – $${j.high.toLocaleString()}`;
 
-        // fire-and-forget lead log
+        // Fire-and-forget lead log (ignore errors)
         fetch("/api/lead", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
