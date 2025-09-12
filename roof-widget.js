@@ -13,6 +13,10 @@
       .estimate{font-weight:700;font-size:20px;margin:8px 0}
       .error{color:#b91c1c;font-size:14px;margin-top:6px}
       .muted{font-size:12px;color:#6b7280}
+      label{display:flex;flex-direction:column;gap:6px}
+      input:required:invalid, input:required:placeholder-shown{ /* visual hint until user types */
+        outline: none;
+      }
     `;
     root.appendChild(s);
 
@@ -25,13 +29,13 @@
           <input id="zip" maxlength="10" placeholder="e.g., 37203" />
         </label>
         <label>City
-          <input id="city" placeholder="e.g., Nashville" />
+          <input id="city" placeholder="e.g., Chattanooga" />
         </label>
         <label>State
           <input id="state" maxlength="2" placeholder="e.g., TN" />
         </label>
         <label>County
-          <input id="county" placeholder="e.g., Davidson" />
+          <input id="county" placeholder="e.g., Hamilton" />
         </label>
         <label>Material
           <select id="material">
@@ -66,10 +70,18 @@
       <p class="muted">Tip: You can fill just ZIP, or City+State, or County+State. We’ll use the best match.</p>
 
       <div class="row">
-        <label>Name <input id="name" placeholder="Jane Doe" /></label>
-        <label>Email <input id="email" placeholder="jane@email.com" /></label>
-        <label>Phone <input id="phone" placeholder="(555) 555-5555" /></label>
-        <label><input type="checkbox" id="consent" /> I agree to be contacted</label>
+        <label>Name
+          <input id="name" required placeholder="Jane Doe" />
+        </label>
+        <label>Email
+          <input id="email" required type="email" placeholder="jane@email.com" />
+        </label>
+        <label>Phone
+          <input id="phone" required placeholder="(555) 555-5555" />
+        </label>
+        <label>
+          <span><input type="checkbox" id="consent" /> I agree to be contacted</span>
+        </label>
       </div>
 
       <div class="actions"><button id="go">Get Estimate</button></div>
@@ -87,6 +99,16 @@
       err.textContent = "";
       out.textContent = "";
 
+      // Extra front-end validation (in addition to HTML "required")
+      const name = $("#name").value.trim();
+      const email = $("#email").value.trim();
+      const phone = $("#phone").value.trim();
+
+      if (!name || !email || !phone) {
+        err.textContent = "Name, Email, and Phone are required.";
+        err.style.display = "";
+        return;
+      }
       if (!$("#consent").checked) {
         err.textContent = "Please check the consent box.";
         err.style.display = "";
@@ -103,12 +125,13 @@
         size: $("#size").value,
         stories: $("#stories").value,
         urgency: $("#urgency").value,
-        name: $("#name").value,
-        email: $("#email").value,
-        phone: $("#phone").value
+        name,
+        email,
+        phone
       });
 
       try {
+        // 1) Estimate
         const r = await fetch("/api/estimate?" + params.toString());
         if (!r.ok) throw new Error("Estimate API returned " + r.status);
         const j = await r.json();
@@ -117,7 +140,7 @@
         }
         out.textContent = `Estimated range: $${j.low.toLocaleString()} – $${j.high.toLocaleString()}`;
 
-        // Fire-and-forget lead log (ignore errors)
+        // 2) Lead capture (fire-and-forget)
         fetch("/api/lead", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
