@@ -1,5 +1,5 @@
-/* public/roof-widget.js */
-/* Instant Roofing Estimate Widget — size presets + modal + brand color detection */
+/* roof-widget/roof-widget.js */
+/* Instant Roofing Estimate Widget — size presets + modal + brand color detection + alignment fix */
 
 (function () {
   // ============== Read config from <script> tag ==============
@@ -19,21 +19,14 @@
     return h.length > 2 ? "ff" : h;
   }
   function rgbToHex(rgb) {
-    // accepts: "rgb(r, g, b)" or "rgba(r, g, b, a)"
     const m = rgb.match(/rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)(?:[ ,/]+([\d.]+))?\)/i);
     if (!m) return null;
     return `#${toHex(m[1])}${toHex(m[2])}${toHex(m[3])}`;
   }
-  function isVisible(el) {
-    const s = getComputedStyle(el);
-    return s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0";
-  }
   function pickFirstColor(candidates) {
     for (const c of candidates) {
       if (!c) continue;
-      // valid CSS hex
       if (/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(c)) return c;
-      // rgb/rgba
       if (c.startsWith("rgb")) {
         const hx = rgbToHex(c);
         if (hx) return hx;
@@ -42,11 +35,8 @@
     return null;
   }
   function detectBrandColor() {
-    // 1) meta theme-color
     const meta = document.querySelector('meta[name="theme-color"]');
     const fromMeta = meta?.getAttribute("content")?.trim();
-
-    // 2) CSS custom properties
     const root = getComputedStyle(document.documentElement);
     const fromVars = [
       root.getPropertyValue("--color-primary"),
@@ -54,37 +44,13 @@
       root.getPropertyValue("--brand"),
       root.getPropertyValue("--accent"),
     ].map(v => v && v.trim()).filter(Boolean);
-
-    // 3) Prominent elements (buttons/links) with solid background or text color
-    const candidatesEls = Array.from(document.querySelectorAll("button, .button, .btn, a, [class*='primary']"))
-      .filter(isVisible)
-      .slice(0, 20);
-
-    const bgColors = candidatesEls
-      .map(el => getComputedStyle(el).backgroundColor)
-      .filter(c => c && c !== "rgba(0, 0, 0, 0)" && c !== "transparent");
-
-    const fgColors = candidatesEls
-      .map(el => getComputedStyle(el).color)
-      .filter(Boolean);
-
-    // 4) Try to read color from site logo if it has a CSS color around it (heuristic)
+    const btns = Array.from(document.querySelectorAll("button, .button, .btn, a, [class*='primary']")).slice(0, 20);
+    const bgColors = btns.map(el => getComputedStyle(el).backgroundColor).filter(c => c && c !== "transparent" && c !== "rgba(0, 0, 0, 0)");
+    const fgColors = btns.map(el => getComputedStyle(el).color).filter(Boolean);
     const header = document.querySelector("header") || document.querySelector(".site-header") || document.querySelector(".navbar");
     const fromHeader = header ? getComputedStyle(header).backgroundColor : "";
-
-    // Order of trust: override > meta > CSS vars > button bg > header bg > link text
-    const picked = pickFirstColor([
-      cfg.primaryOverride,
-      fromMeta,
-      ...fromVars,
-      ...bgColors,
-      fromHeader,
-      ...fgColors,
-    ]);
-
-    return picked || "#0f172a"; // default
+    return pickFirstColor([cfg.primaryOverride, fromMeta, ...fromVars, ...bgColors, fromHeader, ...fgColors]) || "#0f172a";
   }
-
   const PRIMARY = detectBrandColor();
 
   // ============== Inject styles (scoped) ==============
@@ -95,6 +61,7 @@
   .rw form .grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--rw-gap)}
   @media (max-width:640px){.rw form .grid{grid-template-columns:1fr}}
   .rw label{font-size:12px;color:var(--rw-muted);display:block}
+  .rw .row{display:contents}
   .rw input,.rw select{width:100%;border:1px solid var(--rw-border);border-radius:10px;padding:10px 12px;background:transparent;color:inherit}
   .rw .hint{font-size:12px;color:var(--rw-muted);margin:4px 0 10px}
   .rw .actions{text-align:right;margin-top:8px}
@@ -169,7 +136,6 @@
           <label for="rw-city">City</label>
           <input id="rw-city" placeholder="e.g., Chattanooga" />
         </div>
-
         <div class="row">
           <label for="rw-state">State</label>
           <input id="rw-state" placeholder="e.g., TN" />
@@ -178,7 +144,6 @@
           <label for="rw-county">County</label>
           <input id="rw-county" placeholder="e.g., Hamilton" />
         </div>
-
         <div class="row">
           <label for="rw-material">Material</label>
           <select id="rw-material">
@@ -195,7 +160,6 @@
             <option value="over3000">Over 3,000 sq ft</option>
           </select>
         </div>
-
         <div class="row">
           <label for="rw-stories">Stories</label>
           <select id="rw-stories">
@@ -213,9 +177,7 @@
           </select>
         </div>
       </div>
-
       <p class="hint">Tip: You can fill ZIP, or City+State, or County+State. We’ll use the best match.</p>
-
       <div class="grid">
         <div class="row">
           <label for="rw-name">Name</label>
@@ -234,7 +196,6 @@
           <label for="rw-consent" style="margin:0">I agree to be contacted</label>
         </div>
       </div>
-
       <div class="error" id="rw-err"></div>
       <div class="actions">
         <button type="submit" id="rw-submit">Get Estimate</button>
@@ -244,17 +205,14 @@
     return { wrap, form };
   }
 
-  // ============== Submit handler ==============
+  // ============== Submit handler (unchanged) ==============
   async function onSubmit(e, root) {
     e.preventDefault();
     const err = $("#rw-err", root);
     const submitBtn = $("#rw-submit", root);
-
     function showError(msg) { err.textContent = msg; err.style.display = ""; }
     function clearError(){ err.textContent = ""; err.style.display = "none"; }
-
     clearError();
-
     const payload = {
       client: cfg.client,
       zip: val("#rw-zip", root),
@@ -270,7 +228,6 @@
       phone: val("#rw-phone", root),
       consent: $("#rw-consent", root)?.checked || false
     };
-
     if (!payload.name || !payload.email || !payload.phone) {
       return showError("Name, Email, and Phone are required.");
     }
@@ -279,59 +236,24 @@
     }
     const phoneE164 = toE164US(payload.phone);
     if (!phoneE164) return showError("Please enter a valid 10-digit US phone number.");
-
     submitBtn.disabled = true; submitBtn.textContent = "Calculating…";
-
     try {
-      // 1) Estimate
       const q = new URLSearchParams({
-        client: payload.client,
-        material: payload.material,
-        size: payload.size,
-        stories: payload.stories,
-        zip: payload.zip,
-        city: payload.city,
-        state: payload.state,
-        county: payload.county
+        client: payload.client, material: payload.material, size: payload.size, stories: payload.stories,
+        zip: payload.zip, city: payload.city, state: payload.state, county: payload.county
       });
       const estRes = await fetch(`/api/estimate?${q.toString()}`, { method: "GET" });
       if (!estRes.ok) throw new Error("Estimate failed");
       const est = await estRes.json();
-
-      // 2) Lead submit
       const leadRes = await fetch(`/api/lead`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client: payload.client,
-          name: payload.name,
-          email: payload.email,
-          phone: phoneE164,
-          zip: payload.zip,
-          city: payload.city,
-          county: payload.county,
-          state: payload.state,
-          material: payload.material,
-          size: payload.size,
-          stories: payload.stories,
-          urgency: payload.urgency,
-          estimate: est?.estimate || null,
-          consent: payload.consent
-        })
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, phone: phoneE164, estimate: est?.estimate || null })
       });
-      if (!leadRes.ok) {
-        const t = await leadRes.text();
-        throw new Error(t || "Lead send failed");
-      }
-
-      // 3) Feedback
+      if (!leadRes.ok) throw new Error(await leadRes.text() || "Lead send failed");
       submitBtn.textContent = "Estimate Ready ✓";
-      const range = est?.estimate
-        ? `$${Number(est.estimate.low).toLocaleString()} – $${Number(est.estimate.high).toLocaleString()}`
-        : "N/A";
+      const range = est?.estimate ? `$${Number(est.estimate.low).toLocaleString()} – $${Number(est.estimate.high).toLocaleString()}` : "N/A";
       alert(`Thanks ${payload.name}! Estimated range: ${range}\nWe’ll be in touch shortly.`);
       if (cfg.variant === "modal" && window.RoofWidget?.close) window.RoofWidget.close();
-
     } catch (er) {
       console.error(er);
       showError("Sorry, we couldn't calculate your estimate. Please try again.");
@@ -340,61 +262,29 @@
     }
   }
 
-  // ============== Modal infra (open/close) ==============
+  // ============== Modal infra ==============
   function buildModalAndMount(formWrap) {
     const bd = document.createElement("div"); bd.className = "rw-backdrop";
     const modal = document.createElement("div"); modal.className = `rw-modal ${cfg.theme === "dark" ? "rw-dark" : ""}`;
     const card = document.createElement("div"); card.className = "rw-card"; card.setAttribute("role","dialog"); card.setAttribute("aria-modal","true");
     const closeBtn = document.createElement("button"); closeBtn.className = "rw-close"; closeBtn.setAttribute("aria-label","Close"); closeBtn.innerHTML = "×";
-
-    card.appendChild(closeBtn);
-    card.appendChild(formWrap);
-    modal.appendChild(card);
-    document.body.appendChild(bd);
-    document.body.appendChild(modal);
-
-    function open() {
-      document.documentElement.style.overflow = "hidden";
-      bd.classList.add("open"); modal.classList.add("open");
-      setTimeout(()=> closeBtn.focus(), 50);
-    }
-    function close() {
-      modal.classList.remove("open"); bd.classList.remove("open");
-      document.documentElement.style.overflow = "";
-    }
-
-    // Close interactions
-    closeBtn.addEventListener("click", close);
-    bd.addEventListener("click", close);
+    card.appendChild(closeBtn); card.appendChild(formWrap); modal.appendChild(card);
+    document.body.appendChild(bd); document.body.appendChild(modal);
+    function open() { document.documentElement.style.overflow = "hidden"; bd.classList.add("open"); modal.classList.add("open"); setTimeout(()=> closeBtn.focus(), 50); }
+    function close() { modal.classList.remove("open"); bd.classList.remove("open"); document.documentElement.style.overflow = ""; }
+    closeBtn.addEventListener("click", close); bd.addEventListener("click", close);
     modal.addEventListener("click", (e)=>{ if (e.target === modal) close(); });
     document.addEventListener("keydown", (e)=>{ if (e.key === "Escape") close(); });
-
-    // External or auto button
     const externalBtn = document.getElementById("rw-open");
     if (externalBtn) externalBtn.addEventListener("click", open);
     else if (cfg.modalButton === "auto") {
       const fab = document.createElement("button");
-      fab.className = "rw-fab";
-      fab.textContent = "Get Instant Estimate";
-      fab.addEventListener("click", open);
-      document.body.appendChild(fab);
+      fab.className = "rw-fab"; fab.textContent = "Get Instant Estimate";
+      fab.addEventListener("click", open); document.body.appendChild(fab);
     }
-
-    // expose
-    window.RoofWidget = window.RoofWidget || {};
-    window.RoofWidget.open = open;
-    window.RoofWidget.close = close;
+    window.RoofWidget = window.RoofWidget || {}; window.RoofWidget.open = open; window.RoofWidget.close = close;
   }
 
   // ============== Mounting ==============
   const { wrap, form } = buildForm();
-  form.addEventListener("submit", (e) => onSubmit(e, wrap));
-
-  if (cfg.variant === "modal") {
-    buildModalAndMount(wrap);
-  } else {
-    const container = me.parentElement || document.body;
-    container.insertBefore(wrap, me);
-  }
-})();
-
+  form.addEventListener("submit",
