@@ -91,6 +91,7 @@
   .rw-close{position:absolute;top:10px;right:10px;border:none;background:transparent;font-size:22px;line-height:1;cursor:pointer;color:#6b7280}
   .rw-fab{position:fixed;right:18px;bottom:18px;border:0;border-radius:999px;padding:12px 16px;background:var(--rw-primary,#0f172a);color:#fff;font-weight:700;box-shadow:0 6px 18px rgba(0,0,0,.2);cursor:pointer;z-index:999997}
   @media (max-width:420px){.rw-fab{left:18px;right:18px;width:auto}}
+  @supports not (display: contents) { .rw form .grid{grid-template-columns:1fr} } /* graceful fallback */
   `;
   const style = document.createElement("style");
   style.textContent = css;
@@ -205,14 +206,17 @@
     return { wrap, form };
   }
 
-  // ============== Submit handler (unchanged) ==============
+  // ============== Submit handler ==============
   async function onSubmit(e, root) {
     e.preventDefault();
-    const err = $("#rw-err", root);
-    const submitBtn = $("#rw-submit", root);
-    function showError(msg) { err.textContent = msg; err.style.display = ""; }
-    function clearError(){ err.textContent = ""; err.style.display = "none"; }
+    const err = document.querySelector("#rw-err");
+    const submitBtn = document.querySelector("#rw-submit");
+
+    function showError(msg) { if (err) { err.textContent = msg; err.style.display = ""; } }
+    function clearError(){ if (err) { err.textContent = ""; err.style.display = "none"; } }
+
     clearError();
+
     const payload = {
       client: cfg.client,
       zip: val("#rw-zip", root),
@@ -228,6 +232,7 @@
       phone: val("#rw-phone", root),
       consent: $("#rw-consent", root)?.checked || false
     };
+
     if (!payload.name || !payload.email || !payload.phone) {
       return showError("Name, Email, and Phone are required.");
     }
@@ -236,29 +241,64 @@
     }
     const phoneE164 = toE164US(payload.phone);
     if (!phoneE164) return showError("Please enter a valid 10-digit US phone number.");
-    submitBtn.disabled = true; submitBtn.textContent = "Calculating…";
+
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Calculating…"; }
+
     try {
+      // 1) Estimate
       const q = new URLSearchParams({
-        client: payload.client, material: payload.material, size: payload.size, stories: payload.stories,
-        zip: payload.zip, city: payload.city, state: payload.state, county: payload.county
+        client: payload.client,
+        material: payload.material,
+        size: payload.size,
+        stories: payload.stories,
+        zip: payload.zip,
+        city: payload.city,
+        state: payload.state,
+        county: payload.county
       });
       const estRes = await fetch(`/api/estimate?${q.toString()}`, { method: "GET" });
       if (!estRes.ok) throw new Error("Estimate failed");
       const est = await estRes.json();
+
+      // 2) Lead submit
       const leadRes = await fetch(`/api/lead`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, phone: phoneE164, estimate: est?.estimate || null })
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client: payload.client,
+          name: payload.name,
+          email: payload.email,
+          phone: phoneE164,
+          zip: payload.zip,
+          city: payload.city,
+          county: payload.county,
+          state: payload.state,
+          material: payload.material,
+          size: payload.size,
+          stories: payload.stories,
+          urgency: payload.urgency,
+          estimate: est?.estimate || null,
+          consent: payload.consent
+        })
       });
-      if (!leadRes.ok) throw new Error(await leadRes.text() || "Lead send failed");
-      submitBtn.textContent = "Estimate Ready ✓";
-      const range = est?.estimate ? `$${Number(est.estimate.low).toLocaleString()} – $${Number(est.estimate.high).toLocaleString()}` : "N/A";
+      if (!leadRes.ok) {
+        const t = await leadRes.text();
+        throw new Error(t || "Lead send failed");
+      }
+
+      // 3) Feedback
+      if (submitBtn) submitBtn.textContent = "Estimate Ready ✓";
+      const range = est?.estimate
+        ? `$${Number(est.estimate.low).toLocaleString()} – $${Number(est.estimate.high).toLocaleString()}`
+        : "N/A";
       alert(`Thanks ${payload.name}! Estimated range: ${range}\nWe’ll be in touch shortly.`);
+
       if (cfg.variant === "modal" && window.RoofWidget?.close) window.RoofWidget.close();
     } catch (er) {
       console.error(er);
       showError("Sorry, we couldn't calculate your estimate. Please try again.");
     } finally {
-      submitBtn.disabled = false; submitBtn.textContent = "Get Estimate";
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Get Estimate"; }
     }
   }
 
@@ -268,23 +308,54 @@
     const modal = document.createElement("div"); modal.className = `rw-modal ${cfg.theme === "dark" ? "rw-dark" : ""}`;
     const card = document.createElement("div"); card.className = "rw-card"; card.setAttribute("role","dialog"); card.setAttribute("aria-modal","true");
     const closeBtn = document.createElement("button"); closeBtn.className = "rw-close"; closeBtn.setAttribute("aria-label","Close"); closeBtn.innerHTML = "×";
-    card.appendChild(closeBtn); card.appendChild(formWrap); modal.appendChild(card);
-    document.body.appendChild(bd); document.body.appendChild(modal);
-    function open() { document.documentElement.style.overflow = "hidden"; bd.classList.add("open"); modal.classList.add("open"); setTimeout(()=> closeBtn.focus(), 50); }
-    function close() { modal.classList.remove("open"); bd.classList.remove("open"); document.documentElement.style.overflow = ""; }
-    closeBtn.addEventListener("click", close); bd.addEventListener("click", close);
+
+    card.appendChild(closeBtn);
+    card.appendChild(formWrap);
+    modal.appendChild(card);
+    document.body.appendChild(bd);
+    document.body.appendChild(modal);
+
+    function open() {
+      document.documentElement.style.overflow = "hidden";
+      bd.classList.add("open"); modal.classList.add("open");
+      setTimeout(()=> closeBtn.focus(), 50);
+    }
+    function close() {
+      modal.classList.remove("open"); bd.classList.remove("open");
+      document.documentElement.style.overflow = "";
+    }
+
+    // Close interactions
+    closeBtn.addEventListener("click", close);
+    bd.addEventListener("click", close);
     modal.addEventListener("click", (e)=>{ if (e.target === modal) close(); });
     document.addEventListener("keydown", (e)=>{ if (e.key === "Escape") close(); });
+
+    // External button or auto FAB
     const externalBtn = document.getElementById("rw-open");
     if (externalBtn) externalBtn.addEventListener("click", open);
     else if (cfg.modalButton === "auto") {
       const fab = document.createElement("button");
-      fab.className = "rw-fab"; fab.textContent = "Get Instant Estimate";
-      fab.addEventListener("click", open); document.body.appendChild(fab);
+      fab.className = "rw-fab";
+      fab.textContent = "Get Instant Estimate";
+      fab.addEventListener("click", open);
+      document.body.appendChild(fab);
     }
-    window.RoofWidget = window.RoofWidget || {}; window.RoofWidget.open = open; window.RoofWidget.close = close;
+
+    // expose
+    window.RoofWidget = window.RoofWidget || {};
+    window.RoofWidget.open = open;
+    window.RoofWidget.close = close;
   }
 
   // ============== Mounting ==============
   const { wrap, form } = buildForm();
-  form.addEventListener("submit",
+  form.addEventListener("submit", (e) => onSubmit(e, wrap));
+
+  if (cfg.variant === "modal") {
+    buildModalAndMount(wrap);
+  } else {
+    const container = me.parentElement || document.body;
+    container.insertBefore(wrap, me);
+  }
+})();
