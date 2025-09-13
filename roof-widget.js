@@ -1,19 +1,18 @@
 /* roof-widget/roof-widget.js */
-/* Instant Roofing Estimate — inline result panel, aligned form, size presets (full/compact/ultra), modal, brand color detection */
+/* Instant Roofing Estimate — inline result panel, client-side fallback if API fails, aligned form, size presets, modal, brand color detection */
 
 (function () {
-  // --- Config from <script> tag ---
   const me = document.currentScript;
   const cfg = {
     client: (me?.dataset?.client || "demo").trim(),
-    variant: (me?.dataset?.variant || "full").toLowerCase(),   // full | compact | ultra | modal
-    theme: (me?.dataset?.theme || "light").toLowerCase(),      // light | dark
+    variant: (me?.dataset?.variant || "full").toLowerCase(),
+    theme: (me?.dataset?.theme || "light").toLowerCase(),
     width: me?.dataset?.width || "560px",
     primaryOverride: me?.dataset?.primary || "",
-    modalButton: (me?.dataset?.modalButton || "").toLowerCase() // "auto"
+    modalButton: (me?.dataset?.modalButton || "").toLowerCase()
   };
 
-  // --- Brand color detection ---
+  // -------- Brand color detection --------
   function toHex(n){return Number(n).toString(16).padStart(2,"0")}
   function rgbToHex(rgb){const m=rgb.match(/rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)/i);return m?`#${toHex(m[1])}${toHex(m[2])}${toHex(m[3])}`:null}
   function pickColor(list){for(const c of list||[]){if(!c)continue;if(/^#([0-9a-f]{3,8})$/i.test(c))return c;if(c.startsWith("rgb")){const h=rgbToHex(c);if(h)return h}}return null}
@@ -29,7 +28,7 @@
   }
   const PRIMARY = detectBrand();
 
-  // --- Styles ---
+  // -------- Styles --------
   const css = `
   .rw{--rw-gap:12px;--rw-pad:14px;--rw-border:#e5e7eb;--rw-bg:#fff;--rw-text:#111827;--rw-muted:#6b7280;--rw-primary:${PRIMARY};
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;color:var(--rw-text);background:var(--rw-bg);
@@ -43,7 +42,6 @@
   .rw label{font-size:12px;color:var(--rw-muted)}
   .rw input,.rw select{width:100%;box-sizing:border-box;border:1px solid var(--rw-border);border-radius:10px;
       padding:8px 10px;line-height:1.2;background:transparent;color:inherit;min-height:36px}
-  /* checkbox */
   .rw input[type=checkbox]{width:14px;height:14px;flex-shrink:0;margin:0}
   .rw .consent{flex-direction:row;align-items:center;gap:6px}
   .rw .consent label{font-size:12px;color:var(--rw-muted);margin:0;line-height:1.2}
@@ -51,26 +49,13 @@
   .rw .actions{display:flex;justify-content:flex-end;margin-top:8px}
   .rw button{border:1px solid var(--rw-primary);background:var(--rw-primary);color:#fff;border-radius:10px;padding:9px 14px;
       cursor:pointer;font-weight:600;min-height:36px}
-  /* result panel */
   .rw .result{margin-top:10px;border:1px dashed var(--rw-border);border-radius:10px;padding:12px;display:none}
   .rw .result.show{display:block}
   .rw .result h3{margin:0 0 6px;font-size:16px}
   .rw .result .range{font-size:18px;font-weight:800}
   .rw .result .meta{font-size:12px;color:var(--rw-muted);margin-top:4px}
-  /* errors */
   .rw .error{display:none;margin:6px 0 0;color:#dc2626;font-size:13px}
   .rw .error.show{display:block}
-  /* compact */
-  .rw--compact{--rw-gap:10px;--rw-pad:12px}
-  .rw--compact h2{font-size:17px;margin-bottom:6px}
-  .rw--compact .grid{gap:10px}
-  .rw--compact input,.rw--compact select{padding:7px 10px;border-radius:8px}
-  /* ultra */
-  .rw--ultra{--rw-gap:8px;--rw-pad:10px}
-  .rw--ultra h2{font-size:16px;margin-bottom:4px}
-  .rw--ultra .grid{grid-template-columns:1fr;gap:8px}
-  .rw--ultra .hint{display:none}
-  /* modal */
   .rw-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:.15s;z-index:99998}
   .rw-modal{position:fixed;inset:0;display:grid;place-items:center;opacity:0;pointer-events:none;transition:.15s;z-index:99999}
   .rw-modal.open,.rw-backdrop.open{opacity:1;pointer-events:auto}
@@ -83,12 +68,36 @@
   `;
   const style=document.createElement("style"); style.textContent=css; document.head.appendChild(style);
 
-  // --- Helpers ---
+  // -------- Helpers --------
   const $ = (sel, el)=> (el||document).querySelector(sel);
   const val = (sel, el)=> ($(sel, el)?.value || "").trim();
   function toE164US(p){if(!p)return null;const d=String(p).replace(/\D/g,"");if(d.length===11&&d.startsWith("1"))return "+"+d; if(d.length===10)return "+1"+d; return null;}
 
-  // --- Build form + result container ---
+  // -------- Fallback estimator (client-side) --------
+  function fallbackEstimate({material,size,stories,urgency}) {
+    // Base ranges by size (shingle baseline)
+    const base = {
+      under1500: [8000, 12000],
+      "1500to3000": [12000, 18000],
+      over3000: [18000, 28000]
+    }[size || "under1500"] || [10000, 15000];
+
+    // Material multipliers vs shingle
+    const matMul = { shingle: 1.0, metal: 1.6, tile: 1.9 }[material || "shingle"] || 1.0;
+
+    // Stories multiplier
+    const s = Number(stories || 1);
+    const storyMul = s >= 3 ? 1.20 : s >= 2 ? 1.10 : 1.00;
+
+    // Urgency (optional small uplift)
+    const urgMul = urgency === "urgent" ? 1.05 : 1.00;
+
+    const low = Math.round(base[0] * matMul * storyMul * urgMul);
+    const high = Math.round(base[1] * matMul * storyMul * urgMul);
+    return { low, high };
+  }
+
+  // -------- Build form + result --------
   function buildForm(){
     const sizeClass = cfg.variant==="compact"?"rw--compact":(cfg.variant==="ultra"?"rw--ultra":"");
     const themeClass = cfg.theme==="dark"?"rw--dark":"";
@@ -130,7 +139,7 @@
     return {wrap, form};
   }
 
-  // --- Submit handler ---
+  // -------- Submit handler --------
   async function onSubmit(e, root){
     e.preventDefault();
     const err=$("#rw-err",root), btn=$("#rw-submit",root), result=$("#rw-result",root);
@@ -177,35 +186,37 @@
     if(btn){btn.disabled=true;btn.textContent="Calculating…";}
     if(result){result.classList.add("show"); result.innerHTML=`<h3>Calculating…</h3><div class="meta">Checking local pricing…</div>`;}
 
+    let finalLow, finalHigh, usedFallback = false;
+
     try{
-      // 1) estimate
+      // 1) Try server estimate first
       const q=new URLSearchParams({
         client: payload.client, material: payload.material, size: payload.size, stories: payload.stories,
         zip: payload.zip, city: payload.city, state: payload.state, county: payload.county
       });
       const estRes=await fetch(`/api/estimate?${q.toString()}`,{method:"GET"});
-      if(!estRes.ok) throw new Error("Estimate failed");
-      const est=await estRes.json();
-
-      const eLow = Number(est?.estimate?.low);
-      const eHigh = Number(est?.estimate?.high);
-      if (!isFinite(eLow) || !isFinite(eHigh) || eLow <= 0 || eHigh <= 0) {
-        throw new Error("Estimate unavailable");
+      if(estRes.ok){
+        const est=await estRes.json();
+        const eLow = Number(est?.estimate?.low);
+        const eHigh = Number(est?.estimate?.high);
+        if (isFinite(eLow) && isFinite(eHigh) && eLow > 0 && eHigh > 0) {
+          finalLow = Math.round(eLow);
+          finalHigh = Math.round(eHigh);
+        }
+      }
+      // 2) Fallback if missing/invalid
+      if (finalLow == null || finalHigh == null) {
+        const fb = fallbackEstimate(payload);
+        finalLow = fb.low; finalHigh = fb.high; usedFallback = true;
       }
 
-      // 2) lead (fire-and-forget UX; still await to catch hard errors)
-      const leadRes=await fetch(`/api/lead`,{
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({...payload, phone: phoneE164, estimate: {low: eLow, high: eHigh}})
-      });
-      if(!leadRes.ok) throw new Error(await leadRes.text()||"Lead send failed");
-
-      // 3) Inline result
-      const range = `$${eLow.toLocaleString()} – $${eHigh.toLocaleString()}`;
+      // 3) Show result immediately
+      const range = `$${finalLow.toLocaleString()} – $${finalHigh.toLocaleString()}`;
       const meta = [
         payload.material ? `Material: <b>${payload.material}</b>` : null,
         payload.stories ? `Stories: <b>${payload.stories}</b>` : null,
-        payload.size ? `Size: <b>${payload.size}</b>` : null
+        payload.size ? `Size: <b>${payload.size}</b>` : null,
+        usedFallback ? `<span style="color:#6b7280">(quick estimate)</span>` : null
       ].filter(Boolean).join(" &nbsp;•&nbsp; ");
       if(result){
         result.classList.add("show");
@@ -216,15 +227,37 @@
           <div class="meta">A local pro will confirm with a quick roof measurement.</div>
         `;
       }
+
+      // 4) Send lead (don’t block UX; still await to catch hard errors)
+      const leadRes=await fetch(`/api/lead`,{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({...payload, phone: phoneE164, estimate: {low: finalLow, high: finalHigh}, estimate_source: usedFallback ? "fallback" : "server"})
+      });
+      if(!leadRes.ok){
+        // Don’t clear the visible estimate; just log
+        console.error("Lead send failed:", await leadRes.text());
+      }
+
     }catch(e){
       console.error(e);
-      showError("Sorry, we couldn’t calculate your estimate just now. Please check your entries and try again.");
-    }finally{
+      // Even if both paths blew up (unlikely), keep fallback visible
+      if(result && (!finalLow || !finalHigh)){
+        const fb = fallbackEstimate(payload);
+        const range = `$${fb.low.toLocaleString()} – $${fb.high.toLocaleString()}`;
+        result.classList.add("show");
+        result.innerHTML = `
+          <h3>Estimated Price Range</h3>
+          <div class="range">${range}</div>
+          <div class="meta">Material: <b>${payload.material}</b> &nbsp;•&nbsp; Stories: <b>${payload.stories}</b> &nbsp;•&nbsp; Size: <b>${payload.size}</b> &nbsp;•&nbsp; <span style="color:#6b7280">(quick estimate)</span></div>
+          <div class="meta">A local pro will confirm with a quick roof measurement.</div>
+        `;
+      }
+    } finally{
       if(btn){btn.disabled=false;btn.textContent="Get Estimate";}
     }
   }
 
-  // --- Modal infra ---
+  // -------- Modal infra --------
   function buildModalAndMount(formWrap){
     const bd=document.createElement("div");bd.className="rw-backdrop";
     const modal=document.createElement("div");modal.className=`rw-modal ${cfg.theme==="dark"?"rw-dark":""}`;
@@ -243,7 +276,7 @@
     window.RoofWidget=window.RoofWidget||{};window.RoofWidget.open=open;window.RoofWidget.close=close;
   }
 
-  // --- Mount ---
+  // -------- Mount --------
   const {wrap, form}=buildForm();
   form.addEventListener("submit",(e)=>onSubmit(e,wrap));
   if(cfg.variant==="modal"){buildModalAndMount(wrap);}else{const container=me.parentElement||document.body;container.insertBefore(wrap,me);}
