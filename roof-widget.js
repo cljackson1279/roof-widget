@@ -1,164 +1,400 @@
+/* public/roof-widget.js */
+/* Instant Roofing Estimate Widget — size presets + modal + brand color detection */
+
 (function () {
-  function mount(container) {
-    const root = container.attachShadow({ mode: "open" });
+  // ============== Read config from <script> tag ==============
+  const me = document.currentScript;
+  const cfg = {
+    client: (me?.dataset?.client || "demo").trim(),
+    variant: (me?.dataset?.variant || "full").toLowerCase(),     // "full" | "compact" | "ultra" | "modal"
+    theme: (me?.dataset?.theme || "light").toLowerCase(),        // "light" | "dark"
+    width: me?.dataset?.width || "100%",                         // e.g., "360px", "520px", "100%"
+    primaryOverride: me?.dataset?.primary || "",                 // manual override; else auto-detect
+    modalButton: (me?.dataset?.modalButton || "").toLowerCase()  // "auto" to render a floating CTA
+  };
 
-    const s = document.createElement("style");
-    s.textContent = `
-      .card{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;max-width:620px;margin:12px auto;padding:16px;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.06)}
-      .row{display:grid;gap:10px;margin:10px 0}
-      @media(min-width:640px){ .row{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-      select,input{padding:10px;border-radius:10px;border:1px solid #d1d5db}
-      button{padding:10px 14px;border-radius:12px;border:0;cursor:pointer;background:#111827;color:#fff}
-      .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}
-      .estimate{font-weight:700;font-size:20px;margin:8px 0}
-      .error{color:#b91c1c;font-size:14px;margin-top:6px}
-      .muted{font-size:12px;color:#6b7280}
-      label{display:flex;flex-direction:column;gap:6px}
-      input:required:invalid, input:required:placeholder-shown{ /* visual hint until user types */
-        outline: none;
+  // ============== Brand color detector ==============
+  function toHex(n) {
+    const h = Number(n).toString(16).padStart(2, "0");
+    return h.length > 2 ? "ff" : h;
+  }
+  function rgbToHex(rgb) {
+    // accepts: "rgb(r, g, b)" or "rgba(r, g, b, a)"
+    const m = rgb.match(/rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)(?:[ ,/]+([\d.]+))?\)/i);
+    if (!m) return null;
+    return `#${toHex(m[1])}${toHex(m[2])}${toHex(m[3])}`;
+  }
+  function isVisible(el) {
+    const s = getComputedStyle(el);
+    return s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0";
+  }
+  function pickFirstColor(candidates) {
+    for (const c of candidates) {
+      if (!c) continue;
+      // valid CSS hex
+      if (/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(c)) return c;
+      // rgb/rgba
+      if (c.startsWith("rgb")) {
+        const hx = rgbToHex(c);
+        if (hx) return hx;
       }
-    `;
-    root.appendChild(s);
+    }
+    return null;
+  }
+  function detectBrandColor() {
+    // 1) meta theme-color
+    const meta = document.querySelector('meta[name="theme-color"]');
+    const fromMeta = meta?.getAttribute("content")?.trim();
 
-    const el = document.createElement("div");
-    el.className = "card";
-    el.innerHTML = `
-      <h2>Get Your Instant Roofing Estimate</h2>
-      <div class="row">
-        <label>ZIP code
-          <input id="zip" maxlength="10" placeholder="e.g., 37203" />
-        </label>
-        <label>City
-          <input id="city" placeholder="e.g., Chattanooga" />
-        </label>
-        <label>State
-          <input id="state" maxlength="2" placeholder="e.g., TN" />
-        </label>
-        <label>County
-          <input id="county" placeholder="e.g., Hamilton" />
-        </label>
-        <label>Material
-          <select id="material">
+    // 2) CSS custom properties
+    const root = getComputedStyle(document.documentElement);
+    const fromVars = [
+      root.getPropertyValue("--color-primary"),
+      root.getPropertyValue("--primary"),
+      root.getPropertyValue("--brand"),
+      root.getPropertyValue("--accent"),
+    ].map(v => v && v.trim()).filter(Boolean);
+
+    // 3) Prominent elements (buttons/links) with solid background or text color
+    const candidatesEls = Array.from(document.querySelectorAll("button, .button, .btn, a, [class*='primary']"))
+      .filter(isVisible)
+      .slice(0, 20);
+
+    const bgColors = candidatesEls
+      .map(el => getComputedStyle(el).backgroundColor)
+      .filter(c => c && c !== "rgba(0, 0, 0, 0)" && c !== "transparent");
+
+    const fgColors = candidatesEls
+      .map(el => getComputedStyle(el).color)
+      .filter(Boolean);
+
+    // 4) Try to read color from site logo if it has a CSS color around it (heuristic)
+    const header = document.querySelector("header") || document.querySelector(".site-header") || document.querySelector(".navbar");
+    const fromHeader = header ? getComputedStyle(header).backgroundColor : "";
+
+    // Order of trust: override > meta > CSS vars > button bg > header bg > link text
+    const picked = pickFirstColor([
+      cfg.primaryOverride,
+      fromMeta,
+      ...fromVars,
+      ...bgColors,
+      fromHeader,
+      ...fgColors,
+    ]);
+
+    return picked || "#0f172a"; // default
+  }
+
+  const PRIMARY = detectBrandColor();
+
+  // ============== Inject styles (scoped) ==============
+  const css = `
+  .rw{--rw-radius:14px;--rw-gap:14px;--rw-border:#e5e7eb;--rw-bg:#fff;--rw-text:#111827;--rw-muted:#6b7280;--rw-primary:${PRIMARY};font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;color:var(--rw-text);background:var(--rw-bg);border:1px solid var(--rw-border);border-radius:var(--rw-radius);padding:16px;box-shadow:0 2px 16px rgba(0,0,0,.06);max-width:${cfg.width}}
+  .rw--dark{--rw-border:#374151;--rw-bg:#111827;--rw-text:#f9fafb;--rw-muted:#9ca3af}
+  .rw h2{margin:0 0 10px;font-size:20px}
+  .rw form .grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--rw-gap)}
+  @media (max-width:640px){.rw form .grid{grid-template-columns:1fr}}
+  .rw label{font-size:12px;color:var(--rw-muted);display:block}
+  .rw input,.rw select{width:100%;border:1px solid var(--rw-border);border-radius:10px;padding:10px 12px;background:transparent;color:inherit}
+  .rw .hint{font-size:12px;color:var(--rw-muted);margin:4px 0 10px}
+  .rw .actions{text-align:right;margin-top:8px}
+  .rw button{border:1px solid var(--rw-primary);background:var(--rw-primary);color:#fff;border-radius:12px;padding:10px 14px;cursor:pointer;font-weight:600}
+  /* compact */
+  .rw--compact{padding:12px}
+  .rw--compact h2{font-size:18px;margin-bottom:8px}
+  .rw--compact form .grid{grid-template-columns:1fr 1fr;gap:10px}
+  .rw--compact input,.rw--compact select{padding:8px 10px;border-radius:8px}
+  @media (max-width:520px){.rw--compact form .grid{grid-template-columns:1fr}}
+  /* ultra */
+  .rw--ultra{padding:10px}
+  .rw--ultra h2{font-size:16px;margin-bottom:6px}
+  .rw--ultra form .grid{grid-template-columns:1fr;gap:8px}
+  .rw--ultra label{display:none}
+  .rw--ultra input::placeholder,.rw--ultra select{font-size:14px}
+  .rw--ultra .hint{display:none}
+  .rw--ultra .actions{margin-top:6px}
+  /* error */
+  .rw .error{display:none;margin:8px 0 0;color:#dc2626;font-size:13px}
+  /* modal shell */
+  .rw-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:.15s;z-index:999998}
+  .rw-modal{position:fixed;inset:0;display:grid;place-items:center;opacity:0;pointer-events:none;transition:.15s;z-index:999999}
+  .rw-modal.open,.rw-backdrop.open{opacity:1;pointer-events:auto}
+  .rw-card{width:min(96vw,560px);max-height:90vh;overflow:auto;border-radius:14px;background:#fff;border:1px solid #e5e7eb;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+  .rw-dark .rw-card{background:#111827;border-color:#374151}
+  .rw-close{position:absolute;top:10px;right:10px;border:none;background:transparent;font-size:22px;line-height:1;cursor:pointer;color:#6b7280}
+  .rw-fab{position:fixed;right:18px;bottom:18px;border:0;border-radius:999px;padding:12px 16px;background:var(--rw-primary,#0f172a);color:#fff;font-weight:700;box-shadow:0 6px 18px rgba(0,0,0,.2);cursor:pointer;z-index:999997}
+  @media (max-width:420px){.rw-fab{left:18px;right:18px;width:auto}}
+  `;
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.head.appendChild(style);
+
+  // ============== Utilities ==============
+  const $ = (sel, el) => (el || document).querySelector(sel);
+  const val = (sel, el) => ($(sel, el)?.value || "").trim();
+
+  function toE164US(p) {
+    if (!p) return null;
+    const s = String(p).trim();
+    if (s.startsWith("+") && /^\+\d{10,15}$/.test(s)) return s;
+    const digits = s.replace(/\D/g, "");
+    if (digits.length === 11 && digits.startsWith("1")) return "+" + digits;
+    if (digits.length === 10) return "+1" + digits;
+    return null;
+  }
+
+  // ============== Build the form ==============
+  function buildForm() {
+    const sizeClass =
+      cfg.variant === "compact" ? "rw--compact" :
+      cfg.variant === "ultra"   ? "rw--ultra"   : "";
+    const themeClass = cfg.theme === "dark" ? "rw--dark" : "";
+
+    const wrap = document.createElement("div");
+    wrap.className = `rw ${themeClass} ${sizeClass}`;
+    wrap.style.setProperty("--rw-primary", PRIMARY);
+
+    const h2 = document.createElement("h2");
+    h2.textContent = "Get Your Instant Roofing Estimate";
+    wrap.appendChild(h2);
+
+    const form = document.createElement("form");
+    form.innerHTML = `
+      <div class="grid">
+        <div class="row">
+          <label for="rw-zip">ZIP code</label>
+          <input id="rw-zip" placeholder="e.g., 37203" inputmode="numeric" />
+        </div>
+        <div class="row">
+          <label for="rw-city">City</label>
+          <input id="rw-city" placeholder="e.g., Chattanooga" />
+        </div>
+
+        <div class="row">
+          <label for="rw-state">State</label>
+          <input id="rw-state" placeholder="e.g., TN" />
+        </div>
+        <div class="row">
+          <label for="rw-county">County</label>
+          <input id="rw-county" placeholder="e.g., Hamilton" />
+        </div>
+
+        <div class="row">
+          <label for="rw-material">Material</label>
+          <select id="rw-material">
             <option value="shingle">Shingle</option>
-            <option value="tile">Tile</option>
             <option value="metal">Metal</option>
+            <option value="tile">Tile</option>
           </select>
-        </label>
-        <label>Home size
-          <select id="size">
-            <option value="lt1500">Under 1,500 sq ft</option>
-            <option value="1500to3000">1,500–3,000</option>
-            <option value="gt3000">Over 3,000</option>
+        </div>
+        <div class="row">
+          <label for="rw-size">Home size</label>
+          <select id="rw-size">
+            <option value="under1500">Under 1,500 sq ft</option>
+            <option value="1500to3000">1,500–3,000 sq ft</option>
+            <option value="over3000">Over 3,000 sq ft</option>
           </select>
-        </label>
-        <label>Stories
-          <select id="stories">
+        </div>
+
+        <div class="row">
+          <label for="rw-stories">Stories</label>
+          <select id="rw-stories">
             <option>1</option>
             <option selected>2</option>
             <option>3</option>
           </select>
-        </label>
-        <label>Urgency
-          <select id="urgency">
-            <option value="later">Next 1–3 months</option>
-            <option value="soon">This month</option>
-            <option value="emergency">Emergency</option>
+        </div>
+        <div class="row">
+          <label for="rw-urgency">Urgency</label>
+          <select id="rw-urgency">
+            <option value="soon">Next 1–3 months</option>
+            <option value="urgent">ASAP (storm damage/leak)</option>
+            <option value="planning">Just planning</option>
           </select>
-        </label>
+        </div>
       </div>
 
-      <p class="muted">Tip: You can fill just ZIP, or City+State, or County+State. We’ll use the best match.</p>
+      <p class="hint">Tip: You can fill ZIP, or City+State, or County+State. We’ll use the best match.</p>
 
-      <div class="row">
-        <label>Name
-          <input id="name" required placeholder="Jane Doe" />
-        </label>
-        <label>Email
-          <input id="email" required type="email" placeholder="jane@email.com" />
-        </label>
-        <label>Phone
-          <input id="phone" required placeholder="(555) 555-5555" />
-        </label>
-        <label>
-          <span><input type="checkbox" id="consent" /> I agree to be contacted</span>
-        </label>
+      <div class="grid">
+        <div class="row">
+          <label for="rw-name">Name</label>
+          <input id="rw-name" placeholder="Jane Doe" required />
+        </div>
+        <div class="row">
+          <label for="rw-email">Email</label>
+          <input id="rw-email" type="email" placeholder="jane@email.com" required />
+        </div>
+        <div class="row">
+          <label for="rw-phone">Phone</label>
+          <input id="rw-phone" placeholder="(555) 555-5555" required />
+        </div>
+        <div class="row" style="display:flex;align-items:center;gap:8px">
+          <input id="rw-consent" type="checkbox" />
+          <label for="rw-consent" style="margin:0">I agree to be contacted</label>
+        </div>
       </div>
 
-      <div class="actions"><button id="go">Get Estimate</button></div>
-      <div class="estimate" id="out"></div>
-      <div class="error" id="err" style="display:none;"></div>
+      <div class="error" id="rw-err"></div>
+      <div class="actions">
+        <button type="submit" id="rw-submit">Get Estimate</button>
+      </div>
     `;
-    root.appendChild(el);
-
-    const $ = (sel) => root.querySelector(sel);
-    const out = $("#out");
-    const err = $("#err");
-
-    $("#go").addEventListener("click", async () => {
-      err.style.display = "none";
-      err.textContent = "";
-      out.textContent = "";
-
-      // Extra front-end validation (in addition to HTML "required")
-      const name = $("#name").value.trim();
-      const email = $("#email").value.trim();
-      const phone = $("#phone").value.trim();
-
-      if (!name || !email || !phone) {
-        err.textContent = "Name, Email, and Phone are required.";
-        err.style.display = "";
-        return;
-      }
-      if (!$("#consent").checked) {
-        err.textContent = "Please check the consent box.";
-        err.style.display = "";
-        return;
-      }
-
-      const params = new URLSearchParams({
-        client: "demo",
-        zip: ($("#zip").value || "").trim(),
-        city: ($("#city").value || "").trim(),
-        state: ($("#state").value || "").trim().toUpperCase(),
-        county: ($("#county").value || "").trim(),
-        material: $("#material").value,
-        size: $("#size").value,
-        stories: $("#stories").value,
-        urgency: $("#urgency").value,
-        name,
-        email,
-        phone
-      });
-
-      try {
-        // 1) Estimate
-        const r = await fetch("/api/estimate?" + params.toString());
-        if (!r.ok) throw new Error("Estimate API returned " + r.status);
-        const j = await r.json();
-        if (!j || typeof j.low !== "number" || typeof j.high !== "number") {
-          throw new Error("Estimate response malformed");
-        }
-        out.textContent = `Estimated range: $${j.low.toLocaleString()} – $${j.high.toLocaleString()}`;
-
-        // 2) Lead capture (fire-and-forget)
-        fetch("/api/lead", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...Object.fromEntries(params), estimate: j })
-        }).catch(() => {});
-      } catch (e) {
-        console.error(e);
-        err.textContent = "Sorry, we couldn't calculate your estimate. Please try again.";
-        err.style.display = "";
-      }
-    });
+    wrap.appendChild(form);
+    return { wrap, form };
   }
 
-  document.addEventListener("DOMContentLoaded", () => {
-    const slot =
-      document.querySelector("[data-roof-widget]") ||
-      (() => { const d = document.createElement("div"); d.setAttribute("data-roof-widget",""); document.body.appendChild(d); return d; })();
-    mount(slot);
-  });
+  // ============== Submit handler ==============
+  async function onSubmit(e, root) {
+    e.preventDefault();
+    const err = $("#rw-err", root);
+    const submitBtn = $("#rw-submit", root);
+
+    function showError(msg) { err.textContent = msg; err.style.display = ""; }
+    function clearError(){ err.textContent = ""; err.style.display = "none"; }
+
+    clearError();
+
+    const payload = {
+      client: cfg.client,
+      zip: val("#rw-zip", root),
+      city: val("#rw-city", root),
+      state: val("#rw-state", root),
+      county: val("#rw-county", root),
+      material: val("#rw-material", root) || "shingle",
+      size: val("#rw-size", root) || "under1500",
+      stories: val("#rw-stories", root) || "2",
+      urgency: val("#rw-urgency", root) || "soon",
+      name: val("#rw-name", root),
+      email: val("#rw-email", root),
+      phone: val("#rw-phone", root),
+      consent: $("#rw-consent", root)?.checked || false
+    };
+
+    if (!payload.name || !payload.email || !payload.phone) {
+      return showError("Name, Email, and Phone are required.");
+    }
+    if (!payload.consent) {
+      return showError("Please check the consent box to proceed.");
+    }
+    const phoneE164 = toE164US(payload.phone);
+    if (!phoneE164) return showError("Please enter a valid 10-digit US phone number.");
+
+    submitBtn.disabled = true; submitBtn.textContent = "Calculating…";
+
+    try {
+      // 1) Estimate
+      const q = new URLSearchParams({
+        client: payload.client,
+        material: payload.material,
+        size: payload.size,
+        stories: payload.stories,
+        zip: payload.zip,
+        city: payload.city,
+        state: payload.state,
+        county: payload.county
+      });
+      const estRes = await fetch(`/api/estimate?${q.toString()}`, { method: "GET" });
+      if (!estRes.ok) throw new Error("Estimate failed");
+      const est = await estRes.json();
+
+      // 2) Lead submit
+      const leadRes = await fetch(`/api/lead`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client: payload.client,
+          name: payload.name,
+          email: payload.email,
+          phone: phoneE164,
+          zip: payload.zip,
+          city: payload.city,
+          county: payload.county,
+          state: payload.state,
+          material: payload.material,
+          size: payload.size,
+          stories: payload.stories,
+          urgency: payload.urgency,
+          estimate: est?.estimate || null,
+          consent: payload.consent
+        })
+      });
+      if (!leadRes.ok) {
+        const t = await leadRes.text();
+        throw new Error(t || "Lead send failed");
+      }
+
+      // 3) Feedback
+      submitBtn.textContent = "Estimate Ready ✓";
+      const range = est?.estimate
+        ? `$${Number(est.estimate.low).toLocaleString()} – $${Number(est.estimate.high).toLocaleString()}`
+        : "N/A";
+      alert(`Thanks ${payload.name}! Estimated range: ${range}\nWe’ll be in touch shortly.`);
+      if (cfg.variant === "modal" && window.RoofWidget?.close) window.RoofWidget.close();
+
+    } catch (er) {
+      console.error(er);
+      showError("Sorry, we couldn't calculate your estimate. Please try again.");
+    } finally {
+      submitBtn.disabled = false; submitBtn.textContent = "Get Estimate";
+    }
+  }
+
+  // ============== Modal infra (open/close) ==============
+  function buildModalAndMount(formWrap) {
+    const bd = document.createElement("div"); bd.className = "rw-backdrop";
+    const modal = document.createElement("div"); modal.className = `rw-modal ${cfg.theme === "dark" ? "rw-dark" : ""}`;
+    const card = document.createElement("div"); card.className = "rw-card"; card.setAttribute("role","dialog"); card.setAttribute("aria-modal","true");
+    const closeBtn = document.createElement("button"); closeBtn.className = "rw-close"; closeBtn.setAttribute("aria-label","Close"); closeBtn.innerHTML = "×";
+
+    card.appendChild(closeBtn);
+    card.appendChild(formWrap);
+    modal.appendChild(card);
+    document.body.appendChild(bd);
+    document.body.appendChild(modal);
+
+    function open() {
+      document.documentElement.style.overflow = "hidden";
+      bd.classList.add("open"); modal.classList.add("open");
+      setTimeout(()=> closeBtn.focus(), 50);
+    }
+    function close() {
+      modal.classList.remove("open"); bd.classList.remove("open");
+      document.documentElement.style.overflow = "";
+    }
+
+    // Close interactions
+    closeBtn.addEventListener("click", close);
+    bd.addEventListener("click", close);
+    modal.addEventListener("click", (e)=>{ if (e.target === modal) close(); });
+    document.addEventListener("keydown", (e)=>{ if (e.key === "Escape") close(); });
+
+    // External or auto button
+    const externalBtn = document.getElementById("rw-open");
+    if (externalBtn) externalBtn.addEventListener("click", open);
+    else if (cfg.modalButton === "auto") {
+      const fab = document.createElement("button");
+      fab.className = "rw-fab";
+      fab.textContent = "Get Instant Estimate";
+      fab.addEventListener("click", open);
+      document.body.appendChild(fab);
+    }
+
+    // expose
+    window.RoofWidget = window.RoofWidget || {};
+    window.RoofWidget.open = open;
+    window.RoofWidget.close = close;
+  }
+
+  // ============== Mounting ==============
+  const { wrap, form } = buildForm();
+  form.addEventListener("submit", (e) => onSubmit(e, wrap));
+
+  if (cfg.variant === "modal") {
+    buildModalAndMount(wrap);
+  } else {
+    const container = me.parentElement || document.body;
+    container.insertBefore(wrap, me);
+  }
 })();
 
